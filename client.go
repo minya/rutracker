@@ -67,12 +67,20 @@ func authenticate(httpClient *http.Client, username string, password string) err
 	form.Set("login_password", password)
 	form.Set("login", "%C2%F5%EE%E4")
 	formData := strings.NewReader(form.Encode())
+
+	// Temporarily disable redirect following — we only need the session cookie
+	// from the login response, not the redirect target (which can be slow).
+	origCheckRedirect := httpClient.CheckRedirect
+	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	res, err := httpClient.Post(rutrackerLoginURL, "application/x-www-form-urlencoded", formData)
+	httpClient.CheckRedirect = origCheckRedirect
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode >= 400 {
+	if res.StatusCode >= 400 && res.StatusCode != http.StatusFound && res.StatusCode != http.StatusMovedPermanently {
 		return fmt.Errorf("rutracker login failed. Status code: %v", res.StatusCode)
 	}
 	return nil
