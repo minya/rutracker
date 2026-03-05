@@ -1,8 +1,10 @@
 package rutracker
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,7 +23,8 @@ type RutrackerClient struct {
 type Option func(*options)
 
 type options struct {
-	timeout time.Duration
+	timeout  time.Duration
+	forceIP6 bool
 }
 
 var defaultOptions = options{
@@ -35,15 +38,33 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
+// WithIPv6 forces all connections to use IPv6.
+func WithIPv6() Option {
+	return func(o *options) {
+		o.forceIP6 = true
+	}
+}
+
 func NewAuthenticatedRutrackerClient(username string, password string, opts ...Option) (RutrackerClient, error) {
 	o := defaultOptions
 	for _, opt := range opts {
 		opt(&o)
 	}
 
+	transport := web.DefaultTransport(5000)
+	if o.forceIP6 {
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialer := &net.Dialer{
+				Timeout:   5 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}
+			return dialer.DialContext(ctx, "tcp6", addr)
+		}
+	}
+
 	httpClient := http.Client{
 		Jar:       web.NewJar(),
-		Transport: web.DefaultTransport(5000),
+		Transport: transport,
 		Timeout:   o.timeout,
 	}
 
@@ -68,8 +89,8 @@ func authenticate(httpClient *http.Client, username string, password string) err
 	form.Set("login", "%C2%F5%EE%E4")
 	formData := strings.NewReader(form.Encode())
 
-	// Temporarily disable redirect following — we only need the session cookie
-	// from the login response, not the redirect target (which can be slow).
+	// Disable redirect following — we only need the session cookie
+	// from the login response, not the redirect target.
 	origCheckRedirect := httpClient.CheckRedirect
 	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
