@@ -18,11 +18,33 @@ type RutrackerClient struct {
 	httpClient *http.Client
 }
 
-func NewAuthenticatedRutrackerClient(username string, password string) (RutrackerClient, error) {
+type Option func(*options)
+
+type options struct {
+	timeout time.Duration
+}
+
+var defaultOptions = options{
+	timeout: 5 * time.Second,
+}
+
+// WithTimeout sets the HTTP client timeout for all requests.
+func WithTimeout(d time.Duration) Option {
+	return func(o *options) {
+		o.timeout = d
+	}
+}
+
+func NewAuthenticatedRutrackerClient(username string, password string, opts ...Option) (RutrackerClient, error) {
+	o := defaultOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	httpClient := http.Client{
 		Jar:       web.NewJar(),
 		Transport: web.DefaultTransport(5000),
-		Timeout:   5 * time.Second,
+		Timeout:   o.timeout,
 	}
 
 	client := RutrackerClient{
