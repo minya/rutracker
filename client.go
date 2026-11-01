@@ -1,7 +1,9 @@
 package rutracker
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +20,35 @@ type RutrackerClient struct {
 	username   string
 	password   string
 	httpClient *http.Client
+	// baseURL is the forum root, "https://rutracker.org/forum/"; tests
+	// point it at a fake server.
+	baseURL string
+}
+
+const defaultBaseURL = "https://rutracker.org/forum/"
+
+// maxTorrentSize caps how much DownloadTorrent reads; .torrent files are
+// kilobytes to a few megabytes.
+const maxTorrentSize = 10 << 20
+
+var (
+	// ErrNotLoggedIn is returned when rutracker answers with its login page
+	// even after logging in again: the session could not be restored (wrong
+	// credentials, captcha, or a changed login flow).
+	ErrNotLoggedIn = errors.New("rutracker: not logged in")
+	// ErrNotTorrent is returned when a download does not return a .torrent
+	// file (e.g. an HTML error page).
+	ErrNotTorrent = errors.New("rutracker: response is not a .torrent file")
+)
+
+// StatusError is returned for an HTTP status other than 200.
+type StatusError struct {
+	Op         string
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("rutracker %s: unexpected HTTP status %d", e.Op, e.StatusCode)
 }
 
 type Option func(*options)
@@ -72,17 +103,18 @@ func NewAuthenticatedRutrackerClient(username string, password string, opts ...O
 		username:   username,
 		password:   password,
 		httpClient: &httpClient,
+		baseURL:    defaultBaseURL,
 	}
 
-	err := authenticate(&httpClient, username, password)
+	err := authenticate(&httpClient, client.baseURL, username, password)
 	if err != nil {
 		return client, err
 	}
 	return client, nil
 }
 
-func authenticate(httpClient *http.Client, username string, password string) error {
-	rutrackerLoginURL := "https://rutracker.org/forum/login.php"
+func authenticate(httpClient *http.Client, baseURL, username string, password string) error {
+	rutrackerLoginURL := baseURL + "login.php"
 	form := url.Values{}
 	form.Set("login_username", username)
 	form.Set("login_password", password)
@@ -107,21 +139,57 @@ func authenticate(httpClient *http.Client, username string, password string) err
 	return nil
 }
 
+// isLoginPage reports whether body is rutracker's logged-out page: it then
+// carries the login form, which logged-in pages do not.
+func isLoginPage(body []byte) bool {
+	return bytes.Contains(body, []byte(`name="login_username"`))
+}
+
+// fetch performs do and returns the body. When rutracker answers with its
+// login page (the session expired), it logs in again once and retries; if
+// the login page comes back again it returns ErrNotLoggedIn.
+func (c *RutrackerClient) fetch(op string, limit int64, do func() (*http.Response, error)) ([]byte, error) {
+	for attempt := 0; ; attempt++ {
+		res, err := do()
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+		res.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode != http.StatusOK {
+			return nil, &StatusError{Op: op, StatusCode: res.StatusCode}
+		}
+		if int64(len(body)) > limit {
+			return nil, fmt.Errorf("rutracker %s: response larger than %d bytes", op, limit)
+		}
+		if !isLoginPage(body) {
+			return body, nil
+		}
+		if attempt > 0 {
+			return nil, ErrNotLoggedIn
+		}
+		logger.Info("rutracker session expired; logging in again")
+		if err := authenticate(c.httpClient, c.baseURL, c.username, c.password); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// Find searches rutracker. It returns an error for a non-200 response and
+// ErrNotLoggedIn when the session cannot be restored, so "no results" is
+// distinguishable from a failed search.
 func (c *RutrackerClient) Find(pattern string) ([]RutrackerSearchItem, error) {
-	searchURL := fmt.Sprintf("https://rutracker.org/forum/tracker.php?nm=%s", url.QueryEscape(pattern))
+	searchURL := fmt.Sprintf("%stracker.php?nm=%s", c.baseURL, url.QueryEscape(pattern))
 	searchBodyData := url.Values{}
 	searchBodyData.Set("nm", pattern)
-	searchBody := strings.NewReader(searchBodyData.Encode())
-	res, err := c.httpClient.Post(searchURL, "application/x-www-form-urlencoded", searchBody)
+	responseBodyData, err := c.fetch("search", 32<<20, func() (*http.Response, error) {
+		return c.httpClient.Post(searchURL, "application/x-www-form-urlencoded", strings.NewReader(searchBodyData.Encode()))
+	})
 	if err != nil {
-		logger.Error(err, "Request failed")
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	responseBodyData, err := io.ReadAll(res.Body)
-	if err != nil {
-		logger.Error(err, "Failed to read response body")
+		logger.Error(err, "Search failed")
 		return nil, err
 	}
 
@@ -134,18 +202,21 @@ func (c *RutrackerClient) Find(pattern string) ([]RutrackerSearchItem, error) {
 	return items, nil
 }
 
+// DownloadTorrent fetches a .torrent file by its relative URL (as returned
+// by Find, e.g. "dl.php?t=123"). It returns an error for a non-200 response,
+// ErrNotLoggedIn when the session cannot be restored, and ErrNotTorrent when
+// the body is not a bencoded dictionary, so HTML pages never reach the
+// caller as torrent data.
 func (c *RutrackerClient) DownloadTorrent(url string) ([]byte, error) {
-	absoluteUrl := fmt.Sprintf("https://rutracker.org/forum/%v", url)
-	res, err := c.httpClient.Get(absoluteUrl)
+	absoluteUrl := c.baseURL + url
+	body, err := c.fetch("download", maxTorrentSize, func() (*http.Response, error) {
+		return c.httpClient.Get(absoluteUrl)
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
-
-	bodyData, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
+	if len(body) == 0 || body[0] != 'd' {
+		return nil, ErrNotTorrent
 	}
-
-	return bodyData, nil
+	return body, nil
 }
