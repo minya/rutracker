@@ -7,8 +7,8 @@ github.com/mattn/go-isatty v0.0.19 h1:JITubQf0MOLdlGRuRq+jtsDlekdYPia9ZFsB8h/APP
 github.com/mattn/go-isatty v0.0.19/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/minya/goutils v0.0.0-20261103164850-c9063cfa906c h1:RN9TV/4tx3BBQ2QZ1maqszOZQzDY0rwZ3pJG9AkotBo=
 github.com/minya/goutils v0.0.0-20261103164850-c9063cfa906c/go.mod h1:FI7uSadCRvIKUVdB2W4by9Hn5sMLX+3a5KNSMs34dA8=
-github.com/minya/logger v0.0.0-20261103164336-ff32fbee7812 h1:tpwBfR4hpY1hEDW4C/rQWNfs+legWgiOU7co8kZ5iw4=
-github.com/minya/logger v0.0.0-20261103164336-ff32fbee7812/go.mod h1:qp64lElurAdFF9Yic9TATogFFrGfH3LpwxJ2raFyIB8=
+github.com/minya/logger v0.0.0-20261103194241-62f8b0e71b44 h1:0jPgB5YX0EdD8b/Ehh8WEDYQoQk1x7C7xzubJ1/1EB0=
+github.com/minya/logger v0.0.0-20261103194241-62f8b0e71b44/go.mod h1:qp64lElurAdFF9Yic9TATogFFrGfH3LpwxJ2raFyIB8=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/rs/xid v1.6.0/go.mod h1:7XoLgs4eV+QndskICGsho+ADou8ySMSjJKDIan90Nz0=
 github.com/rs/zerolog v1.34.0 h1:k43nTLIwcTVQAncfCw4KZ2VY6ukYoZaBPNOE8txlOeY=

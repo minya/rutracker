@@ -4,7 +4,7 @@ go 1.25.4
 
 require (
 	github.com/minya/goutils v0.0.0-20261103164850-c9063cfa906c
-	github.com/minya/logger v0.0.0-20261103164336-ff32fbee7812
+	github.com/minya/logger v0.0.0-20261103194241-62f8b0e71b44
 	golang.org/x/text v0.33.0
 )
 
