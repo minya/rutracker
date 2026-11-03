@@ -1,8 +1,10 @@
 package rutracker
 
 import (
+	"html"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/minya/logger"
 	"golang.org/x/text/encoding/charmap"
@@ -38,8 +40,8 @@ func ParseSearchItems(responseBytes *[]byte) ([]RutrackerSearchItem, error) {
 		item := RutrackerSearchItem{
 			TopicID:     topicID,
 			DownloadURL: group[4],
-			URL:         group[3],
-			Title:       group[3],
+			URL:         html.UnescapeString(group[2]),
+			Title:       plainText(group[3]),
 			Seeders:     seeders,
 			Size: ItemSize{
 				Size: parseSize(group[5]),
@@ -49,6 +51,14 @@ func ParseSearchItems(responseBytes *[]byte) ([]RutrackerSearchItem, error) {
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+var htmlTag = regexp.MustCompile(`<[^>]*>`)
+
+// plainText turns the topic link's inner HTML into display text: tags such
+// as <wbr> are dropped and entities such as &quot; decoded.
+func plainText(innerHTML string) string {
+	return strings.TrimSpace(html.UnescapeString(htmlTag.ReplaceAllString(innerHTML, "")))
 }
 
 func parseSize(sizeStr string) float64 {
