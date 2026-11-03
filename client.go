@@ -150,20 +150,21 @@ func authenticate(ctx context.Context, httpClient *http.Client, baseURL, usernam
 	form.Set("login", "\xC2\xF5\xEE\xE4")
 	formData := strings.NewReader(form.Encode())
 
-	// Disable redirect following — we only need the session cookie
-	// from the login response, not the redirect target.
-	origCheckRedirect := httpClient.CheckRedirect
-	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+	// Do not follow the redirect: only the session cookie of the login
+	// response matters. A shallow copy of the client (same jar and
+	// transport) carries that policy, so the shared client is never
+	// modified: a client used by several goroutines may log in again from
+	// any of them when its session expires.
+	loginClient := *httpClient
+	loginClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rutrackerLoginURL, formData)
 	if err != nil {
-		httpClient.CheckRedirect = origCheckRedirect
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	res, err := httpClient.Do(req)
-	httpClient.CheckRedirect = origCheckRedirect
+	res, err := loginClient.Do(req)
 	if err != nil {
 		return err
 	}
