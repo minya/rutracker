@@ -77,7 +77,16 @@ func WithIPv6() Option {
 	}
 }
 
+// NewAuthenticatedRutrackerClient is NewAuthenticatedRutrackerClientContext
+// with context.Background().
 func NewAuthenticatedRutrackerClient(username string, password string, opts ...Option) (RutrackerClient, error) {
+	return NewAuthenticatedRutrackerClientContext(context.Background(), username, password, opts...)
+}
+
+// NewAuthenticatedRutrackerClientContext builds a client and logs in. ctx
+// bounds the login request; cancelling it aborts the request. On error the
+// returned client is the zero value.
+func NewAuthenticatedRutrackerClientContext(ctx context.Context, username string, password string, opts ...Option) (RutrackerClient, error) {
 	o := defaultOptions
 	for _, opt := range opts {
 		opt(&o)
@@ -107,9 +116,8 @@ func NewAuthenticatedRutrackerClient(username string, password string, opts ...O
 		baseURL:    defaultBaseURL,
 	}
 
-	err := authenticate(&httpClient, client.baseURL, username, password)
-	if err != nil {
-		return client, err
+	if err := authenticate(ctx, &httpClient, client.baseURL, username, password); err != nil {
+		return RutrackerClient{}, err
 	}
 	return client, nil
 }
@@ -125,7 +133,7 @@ func toCP1251(s string) string {
 	return enc
 }
 
-func authenticate(httpClient *http.Client, baseURL, username string, password string) error {
+func authenticate(ctx context.Context, httpClient *http.Client, baseURL, username string, password string) error {
 	rutrackerLoginURL := baseURL + "login.php"
 	form := url.Values{}
 	form.Set("login_username", toCP1251(username))
@@ -141,7 +149,13 @@ func authenticate(httpClient *http.Client, baseURL, username string, password st
 	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	res, err := httpClient.Post(rutrackerLoginURL, "application/x-www-form-urlencoded", formData)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rutrackerLoginURL, formData)
+	if err != nil {
+		httpClient.CheckRedirect = origCheckRedirect
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := httpClient.Do(req)
 	httpClient.CheckRedirect = origCheckRedirect
 	if err != nil {
 		return err
@@ -162,7 +176,7 @@ func isLoginPage(body []byte) bool {
 // fetch performs do and returns the body. When rutracker answers with its
 // login page (the session expired), it logs in again once and retries; if
 // the login page comes back again it returns ErrNotLoggedIn.
-func (c *RutrackerClient) fetch(op string, limit int64, do func() (*http.Response, error)) ([]byte, error) {
+func (c *RutrackerClient) fetch(ctx context.Context, op string, limit int64, do func() (*http.Response, error)) ([]byte, error) {
 	for attempt := 0; ; attempt++ {
 		res, err := do()
 		if err != nil {
@@ -186,7 +200,7 @@ func (c *RutrackerClient) fetch(op string, limit int64, do func() (*http.Respons
 			return nil, ErrNotLoggedIn
 		}
 		logger.Info("rutracker session expired; logging in again")
-		if err := authenticate(c.httpClient, c.baseURL, c.username, c.password); err != nil {
+		if err := authenticate(ctx, c.httpClient, c.baseURL, c.username, c.password); err != nil {
 			return nil, err
 		}
 	}
@@ -196,11 +210,22 @@ func (c *RutrackerClient) fetch(op string, limit int64, do func() (*http.Respons
 // ErrNotLoggedIn when the session cannot be restored, so "no results" is
 // distinguishable from a failed search.
 func (c *RutrackerClient) Find(pattern string) ([]RutrackerSearchItem, error) {
+	return c.FindContext(context.Background(), pattern)
+}
+
+// FindContext is Find bounded by ctx: cancelling it aborts the search (and
+// a re-login it needs).
+func (c *RutrackerClient) FindContext(ctx context.Context, pattern string) ([]RutrackerSearchItem, error) {
 	searchURL := fmt.Sprintf("%stracker.php?nm=%s", c.baseURL, url.QueryEscape(pattern))
 	searchBodyData := url.Values{}
 	searchBodyData.Set("nm", pattern)
-	responseBodyData, err := c.fetch("search", 32<<20, func() (*http.Response, error) {
-		return c.httpClient.Post(searchURL, "application/x-www-form-urlencoded", strings.NewReader(searchBodyData.Encode()))
+	responseBodyData, err := c.fetch(ctx, "search", 32<<20, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, searchURL, strings.NewReader(searchBodyData.Encode()))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return c.httpClient.Do(req)
 	})
 	if err != nil {
 		logger.Error(err, "Search failed")
@@ -222,9 +247,18 @@ func (c *RutrackerClient) Find(pattern string) ([]RutrackerSearchItem, error) {
 // the body is not a bencoded dictionary, so HTML pages never reach the
 // caller as torrent data.
 func (c *RutrackerClient) DownloadTorrent(url string) ([]byte, error) {
+	return c.DownloadTorrentContext(context.Background(), url)
+}
+
+// DownloadTorrentContext is DownloadTorrent bounded by ctx.
+func (c *RutrackerClient) DownloadTorrentContext(ctx context.Context, url string) ([]byte, error) {
 	absoluteUrl := c.baseURL + url
-	body, err := c.fetch("download", maxTorrentSize, func() (*http.Response, error) {
-		return c.httpClient.Get(absoluteUrl)
+	body, err := c.fetch(ctx, "download", maxTorrentSize, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, absoluteUrl, nil)
+		if err != nil {
+			return nil, err
+		}
+		return c.httpClient.Do(req)
 	})
 	if err != nil {
 		return nil, err

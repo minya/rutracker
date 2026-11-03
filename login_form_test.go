@@ -1,10 +1,11 @@
 package rutracker
 
 import (
+	"context"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/http/cookiejar"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -21,11 +22,11 @@ func TestLoginFormEncoding(t *testing.T) {
 	}))
 	defer srv.Close()
 	jar, _ := cookiejar.New(nil)
-	_ = authenticate(&http.Client{Jar: jar}, srv.URL+"/", "Иван", "пароль1")
+	_ = authenticate(context.Background(), &http.Client{Jar: jar}, srv.URL+"/", "Иван", "пароль1")
 
 	for _, want := range []string{
-		"login=%C2%F5%EE%E4",                  // "Вход", once
-		"login_username=%C8%E2%E0%ED",         // "Иван" in cp1251
+		"login=%C2%F5%EE%E4",                 // "Вход", once
+		"login_username=%C8%E2%E0%ED",        // "Иван" in cp1251
 		"login_password=%EF%E0%F0%EE%EB%FC1", // "пароль1" in cp1251
 	} {
 		if !strings.Contains(body, want) {
