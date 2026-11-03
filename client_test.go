@@ -114,6 +114,8 @@ func TestExpiredSessionLogsInAgain(t *testing.T) {
 func TestLoginPageAfterReloginIsNotLoggedIn(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/login.php") {
+			// The login itself succeeds, yet pages still say logged out.
+			http.SetCookie(w, &http.Cookie{Name: "bb_session", Value: "x"})
 			w.WriteHeader(http.StatusFound)
 			return
 		}

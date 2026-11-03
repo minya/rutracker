@@ -40,6 +40,13 @@ var (
 	// ErrNotTorrent is returned when a download does not return a .torrent
 	// file (e.g. an HTML error page).
 	ErrNotTorrent = errors.New("rutracker: response is not a .torrent file")
+	// ErrLoginFailed is returned when the login does not yield a session:
+	// wrong credentials, or an unexpected answer.
+	ErrLoginFailed = errors.New("rutracker: login failed (wrong username or password?)")
+	// ErrCaptcha is returned when rutracker asks for a captcha before it
+	// accepts a login, which happens after several failed logins; log in
+	// once in a browser to clear it.
+	ErrCaptcha = errors.New("rutracker: login requires a captcha; log in once in a browser")
 )
 
 // StatusError is returned for an HTTP status other than 200.
@@ -161,10 +168,36 @@ func authenticate(ctx context.Context, httpClient *http.Client, baseURL, usernam
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode >= 400 && res.StatusCode != http.StatusFound && res.StatusCode != http.StatusMovedPermanently {
-		return fmt.Errorf("rutracker login failed. Status code: %v", res.StatusCode)
+	// A successful login redirects and sets the bb_session cookie. A wrong
+	// password, or a captcha challenge (after a few failed logins), answers
+	// 200 with the login form again, so anything else is a failure: before,
+	// such a client looked logged in and every search came back empty.
+	if res.StatusCode >= 300 && res.StatusCode < 400 && setsSessionCookie(res) {
+		return nil
 	}
-	return nil
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if isCaptchaPage(body) {
+		return ErrCaptcha
+	}
+	return fmt.Errorf("%w (status %d)", ErrLoginFailed, res.StatusCode)
+}
+
+// sessionCookie is the cookie rutracker sets on a successful login.
+const sessionCookie = "bb_session"
+
+func setsSessionCookie(res *http.Response) bool {
+	for _, c := range res.Cookies() {
+		if c.Name == sessionCookie && c.Value != "" && c.Value != "deleted" {
+			return true
+		}
+	}
+	return false
+}
+
+// isCaptchaPage reports whether a login answer asks for a captcha: its form
+// then carries the cap_sid field and a captcha image.
+func isCaptchaPage(body []byte) bool {
+	return bytes.Contains(body, []byte(`name="cap_sid"`)) || bytes.Contains(body, []byte("captcha"))
 }
 
 // isLoginPage reports whether body is rutracker's logged-out page: it then
