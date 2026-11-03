@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"golang.org/x/text/encoding/charmap"
 	"io"
 	"net"
 	"net/http"
@@ -113,12 +114,25 @@ func NewAuthenticatedRutrackerClient(username string, password string, opts ...O
 	return client, nil
 }
 
+// toCP1251 encodes s in Windows-1251, the charset of rutracker's pages,
+// which browsers use to submit its forms; ASCII is unchanged. A string with
+// a character cp1251 cannot represent is sent as is (UTF-8).
+func toCP1251(s string) string {
+	enc, err := charmap.Windows1251.NewEncoder().String(s)
+	if err != nil {
+		return s
+	}
+	return enc
+}
+
 func authenticate(httpClient *http.Client, baseURL, username string, password string) error {
 	rutrackerLoginURL := baseURL + "login.php"
 	form := url.Values{}
-	form.Set("login_username", username)
-	form.Set("login_password", password)
-	form.Set("login", "%C2%F5%EE%E4")
+	form.Set("login_username", toCP1251(username))
+	form.Set("login_password", toCP1251(password))
+	// The submit button's value, "Вход" in cp1251. Raw bytes: Encode
+	// percent-encodes them once, as %C2%F5%EE%E4.
+	form.Set("login", "\xC2\xF5\xEE\xE4")
 	formData := strings.NewReader(form.Encode())
 
 	// Disable redirect following — we only need the session cookie
